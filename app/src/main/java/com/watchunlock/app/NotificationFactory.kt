@@ -6,10 +6,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
-import android.text.SpannableString
-import android.text.style.StyleSpan
-import android.graphics.Typeface
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
 import androidx.core.app.RemoteInput
@@ -17,6 +15,7 @@ import androidx.core.app.RemoteInput
 object NotificationFactory {
     private const val CHANNEL_ACTIONS = "watchunlock_actions"
     private const val CHANNEL_MESSAGES = "watchunlock_messages"
+    private const val UNLOCK_NOTIFICATION_ID = 1004
 
     fun createChannels(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -96,6 +95,54 @@ object NotificationFactory {
             .addAction(replyAction)
             .build()
         notify(context, 1003, notification)
+    }
+
+    fun sendUnlockRequest(context: Context, request: UnlockRequestStore.Request) {
+        require(request.state == UnlockRequestStore.State.PENDING && request.remainingMillis > 0)
+        val remoteInput = RemoteInput.Builder(ActionReceiver.KEY_REPLY)
+            .setLabel("回复已设置的确认文字")
+            .build()
+        val intent = Intent(context, ActionReceiver::class.java).apply {
+            action = ActionReceiver.ACTION_UNLOCK_REPLY
+            // PendingIntent identity includes data. An old watch notification cannot target a new request.
+            data = Uri.Builder().scheme("watchunlock").authority("unlock-request")
+                .appendPath(request.id).build()
+        }
+        val pendingIntent = PendingIntent.getBroadcast(
+            context,
+            UNLOCK_NOTIFICATION_ID,
+            intent,
+            PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_MUTABLE
+        )
+        val replyAction = NotificationCompat.Action.Builder(
+            android.R.drawable.ic_menu_send, "回复", pendingIntent
+        )
+            .addRemoteInput(remoteInput)
+            .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
+            .setAllowGeneratedReplies(false)
+            .setShowsUserInterface(false)
+            .build()
+        val me = Person.Builder().setName("WatchUnlock").setKey("watchunlock").build()
+        val sender = Person.Builder().setName("电脑（模拟请求）").setKey("windows-demo").build()
+        val style = NotificationCompat.MessagingStyle(me)
+            .setGroupConversation(false)
+            .addMessage(
+                "电脑请求解锁，请在 ${request.remainingMillis / 1000} 秒内回复已设置的确认文字。",
+                System.currentTimeMillis(), sender
+            )
+        val notification = base(context, CHANNEL_MESSAGES, UNLOCK_NOTIFICATION_ID)
+            .setStyle(style)
+            .setContentTitle("WatchUnlock：模拟解锁请求")
+            .setContentText("请回复已设置的确认文字。")
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setTimeoutAfter(request.remainingMillis)
+            .addAction(replyAction)
+            .build()
+        notify(context, UNLOCK_NOTIFICATION_ID, notification)
+    }
+
+    fun cancelUnlockRequest(context: Context) {
+        context.getSystemService(NotificationManager::class.java).cancel(UNLOCK_NOTIFICATION_ID)
     }
 
     private fun base(context: Context, channel: String, requestCode: Int): NotificationCompat.Builder {
