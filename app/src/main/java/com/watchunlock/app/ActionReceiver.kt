@@ -23,7 +23,7 @@ class ActionReceiver : BroadcastReceiver() {
             val reply = RemoteInput.getResultsFromIntent(intent)
                 ?.getCharSequence(KEY_REPLY)?.toString()
             val result = when (UnlockRequestStore(context).receiveReply(requestId, reply)) {
-                UnlockRequestStore.State.APPROVED -> "回复匹配，模拟请求已通过（未连接 Windows）"
+                UnlockRequestStore.State.APPROVED -> "回复匹配，请求已确认（仅验证，不执行解锁）"
                 UnlockRequestStore.State.REJECTED -> "回复错误或为空，本次请求已拒绝"
                 else -> {
                     record(context, "已忽略失效、重复或不属于当前请求的回复")

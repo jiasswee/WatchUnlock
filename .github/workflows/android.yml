@@ -51,3 +51,23 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
+
+  build-windows:
+    name: Build Windows BLE client
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Publish Windows BLE client
+        run: dotnet publish windows/WatchUnlock.BleClient/WatchUnlock.BleClient.csproj --configuration Release --runtime win-x64 --self-contained true --output dist/windows-ble
+      - name: Upload Windows BLE client
+        uses: actions/upload-artifact@v4
+        with:
+          name: WatchUnlock-Windows-BLE-client
+          path: dist/windows-ble/
+          if-no-files-found: error
+          retention-days: 14

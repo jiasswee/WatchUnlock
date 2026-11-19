@@ -123,7 +123,10 @@ object NotificationFactory {
             .setShowsUserInterface(false)
             .build()
         val me = Person.Builder().setName("WatchUnlock").setKey("watchunlock").build()
-        val sender = Person.Builder().setName("电脑（模拟请求）").setKey("windows-demo").build()
+        val isBle = request.source == UnlockRequestStore.Source.BLE
+        val sender = Person.Builder()
+            .setName(if (isBle) "${request.computerName}（通信测试）" else "电脑（模拟请求）")
+            .setKey(if (isBle) "windows-ble" else "windows-demo").build()
         val style = NotificationCompat.MessagingStyle(me)
             .setGroupConversation(false)
             .addMessage(
@@ -132,7 +135,7 @@ object NotificationFactory {
             )
         val notification = base(context, CHANNEL_MESSAGES, UNLOCK_NOTIFICATION_ID)
             .setStyle(style)
-            .setContentTitle("WatchUnlock：模拟解锁请求")
+            .setContentTitle(if (isBle) "WatchUnlock：BLE 通信请求" else "WatchUnlock：模拟解锁请求")
             .setContentText("请回复已设置的确认文字。")
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setTimeoutAfter(request.remainingMillis)

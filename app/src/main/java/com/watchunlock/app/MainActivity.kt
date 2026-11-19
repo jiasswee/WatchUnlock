@@ -2,6 +2,7 @@ package com.watchunlock.app
 
 import android.Manifest
 import android.app.Activity
+import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.os.Build
@@ -25,10 +26,12 @@ class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListe
     private lateinit var logView: TextView
     private lateinit var requestView: TextView
     private lateinit var cancelButton: Button
+    private lateinit var bleStatusView: TextView
     private val handler = Handler(Looper.getMainLooper())
     private val refreshTask = object : Runnable {
         override fun run() {
             refreshRequest()
+            refreshBleStatus()
             handler.postDelayed(this, 1000)
         }
     }
@@ -48,11 +51,31 @@ class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListe
         content.addView(title)
 
         val description = TextView(this).apply {
-            text = "手机检查快捷回复是否匹配；Windows 负责最终认证。当前先验证回复规则，尚未连接电脑。"
+            text = "手机检查快捷回复是否匹配；Windows 负责最终认证。当前支持本地验证和 BLE 通信测试，尚未接入电脑登录。"
             textSize = 15f
             setPadding(0, 12, 0, 20)
         }
         content.addView(description)
+
+        content.addView(makeButton("开启 BLE 通信测试") {
+            if (ensureNotificationPermission() && ensureBluetoothPermissions()) {
+                try {
+                    ContextCompat.startForegroundService(this, Intent(this, BleGattService::class.java))
+                } catch (_: SecurityException) {
+                    Toast.makeText(this, "请检查附近设备和通知权限", Toast.LENGTH_LONG).show()
+                } catch (_: IllegalStateException) {
+                    Toast.makeText(this, "无法启动蓝牙服务，请保持 App 在前台后重试", Toast.LENGTH_LONG).show()
+                }
+            }
+        })
+        content.addView(makeButton("停止 BLE 通信测试") {
+            stopService(Intent(this, BleGattService::class.java))
+        })
+        bleStatusView = TextView(this).apply {
+            textSize = 15f
+            setPadding(0, 8, 0, 16)
+        }
+        content.addView(bleStatusView)
 
         val store = UnlockRequestStore(this)
         content.addView(TextView(this).apply { text = "允许授权的回复内容（默认：好）" })
@@ -159,6 +182,8 @@ class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListe
             .registerOnSharedPreferenceChangeListener(this)
         getSharedPreferences(UnlockRequestStore.PREFS, MODE_PRIVATE)
             .registerOnSharedPreferenceChangeListener(this)
+        getSharedPreferences(BleGattService.PREFS, MODE_PRIVATE)
+            .registerOnSharedPreferenceChangeListener(this)
         refreshLog()
         handler.post(refreshTask)
     }
@@ -169,11 +194,15 @@ class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListe
             .unregisterOnSharedPreferenceChangeListener(this)
         getSharedPreferences(UnlockRequestStore.PREFS, MODE_PRIVATE)
             .unregisterOnSharedPreferenceChangeListener(this)
+        getSharedPreferences(BleGattService.PREFS, MODE_PRIVATE)
+            .unregisterOnSharedPreferenceChangeListener(this)
         super.onPause()
     }
 
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences, key: String?) {
-        if (key == ActionReceiver.KEY_LOG) refreshLog() else refreshRequest()
+        if (key == ActionReceiver.KEY_LOG) refreshLog()
+        else if (key == BleGattService.KEY_STATUS) refreshBleStatus()
+        else refreshRequest()
     }
 
     private fun refreshRequest() {
@@ -181,13 +210,31 @@ class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListe
         requestView.text = when (request?.state) {
             null -> "尚未发起模拟请求"
             UnlockRequestStore.State.PENDING -> "等待快捷回复，剩余 ${(request.remainingMillis + 999) / 1000} 秒"
-            UnlockRequestStore.State.APPROVED -> "回复匹配，模拟请求已通过（未连接 Windows）"
+            UnlockRequestStore.State.APPROVED -> "回复匹配，请求已确认（仅验证，不执行解锁）"
             UnlockRequestStore.State.REJECTED -> "回复错误，本次请求已拒绝，可重新发起"
             UnlockRequestStore.State.EXPIRED -> "请求已超时或失效，可重新发起"
             UnlockRequestStore.State.REPLACED -> "旧请求已作废"
             UnlockRequestStore.State.CANCELLED -> "请求已取消，可重新发起"
         }
         cancelButton.isEnabled = request?.state == UnlockRequestStore.State.PENDING
+    }
+
+    private fun refreshBleStatus() {
+        val value = if (BleGattService.isRunning) {
+            getSharedPreferences(BleGattService.PREFS, MODE_PRIVATE).getString(BleGattService.KEY_STATUS, null)
+                ?: "正在启动"
+        } else "蓝牙服务未开启"
+        bleStatusView.text = value
+    }
+
+    private fun ensureBluetoothPermissions(): Boolean {
+        if (Build.VERSION.SDK_INT < 31) return true
+        val required = arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_ADVERTISE)
+        val missing = required.filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
+        if (missing.isEmpty()) return true
+        ActivityCompat.requestPermissions(this, missing.toTypedArray(), REQUEST_BLUETOOTH)
+        Toast.makeText(this, "授权后请再次点击开启 BLE 通信测试", Toast.LENGTH_LONG).show()
+        return false
     }
 
     private fun makeButton(label: String, action: () -> Unit): Button {
@@ -239,5 +286,6 @@ class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListe
 
     companion object {
         private const val REQUEST_NOTIFICATIONS = 1001
+        private const val REQUEST_BLUETOOTH = 1002
     }
 }

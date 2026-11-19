@@ -7,8 +7,8 @@ The phone validates a human confirmation; Windows verifies the authorization and
 | Part | Responsibility | Status |
 | --- | --- | --- |
 | Watch Fit 3 | Display a notification and send a quick reply | This APK's callback path requires device validation |
-| Android APK (Kotlin) | Validate the reply and active request; later authenticate BLE requests and responses | Local reply-validation demo implemented |
-| Windows background service (C++ or C#) | Generate challenges, communicate over BLE, validate responses and deadlines | Planned |
+| Android APK (Kotlin) | Validate the reply and active request; later authenticate BLE requests and responses | Local validation and foreground BLE GATT transport implemented; device validation pending |
+| Windows background service (C++ or C#) | Generate challenges, communicate over BLE, validate responses and deadlines | Console BLE client implemented in C#; service and cryptographic verification planned |
 | Credential Provider V2 DLL (C++) | Offer a login/unlock tile and submit credentials to Windows authentication | Planned |
 
 The current APK emits its own notification and receives its `RemoteInput` callback. Listening to unrelated apps' notifications is unnecessary for this path. For this personal-use project, replies from either the phone or the watch are accepted. Distinguishing their origin is not required; both follow the same phrase, deadline, and single-use checks.
@@ -23,7 +23,9 @@ The current APK emits its own notification and receives its `RemoteInput` callba
 - The computer may start another request, or the user may use Windows' existing password, PIN, or Hello options.
 - A matching phrase is human confirmation from either device. It is not a cryptographic secret or sufficient authentication by itself; Windows still validates the authenticated authorization and performs account authentication.
 
-## BLE and authenticated authorization (planned)
+## BLE transport and planned authenticated authorization
+
+The stage-2 Android server and Windows console client implement the unauthenticated [transport protocol](ble-protocol.md). Use them to validate real-device communication without enabling Windows unlocks. Secure pairing and authenticated authorization described below are not implemented yet.
 
 Android is the BLE GATT server and advertises a dedicated service. Windows is the GATT client and discovers/connects to the paired phone. No router, Internet connection, or EasyTier is needed.
 
