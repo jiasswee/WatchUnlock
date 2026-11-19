@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Version>0.5.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
+    <PackageReference Include="System.IO.Pipes.AccessControl" Version="5.0.0" />
+    <PackageReference Include="System.IO.FileSystem.AccessControl" Version="5.0.0" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+    <Compile Include="../WatchUnlock.BleClient/BleClient.cs" Link="Bluetooth/BleClient.cs" />
+    <Compile Include="../WatchUnlock.BleClient/PairingProtocol.cs" Link="Bluetooth/PairingProtocol.cs" />
+    <Compile Include="../WatchUnlock.BleClient/PhoneDiscovery.cs" Link="Bluetooth/PhoneDiscovery.cs" />
+    <Compile Include="../WatchUnlock.BleClient/ServiceProtocol.cs" Link="ServiceProtocol.cs" />
+  </ItemGroup>
+</Project>

@@ -11,26 +11,21 @@ Phone? selected = null;
 byte[]? pairingKey = null;
 try
 {
+    Console.WriteLine("回车进入直接通信测试；输入 s 管理后台服务，q 退出。");
+    var mode = Console.ReadLine()?.Trim();
+    if (mode is null || mode.Equals("q", StringComparison.OrdinalIgnoreCase)) return;
+    if (mode.Equals("s", StringComparison.OrdinalIgnoreCase))
+    {
+        await ServiceControl.MenuAsync(shutdown.Token);
+        return;
+    }
     pairingKey = PairingProtocol.ReadKey();
     while (!shutdown.IsCancellationRequested)
     {
         if (selected is null)
         {
-            Console.WriteLine("正在扫描手机（8 秒）……");
-            var phones = await BleClient.DiscoverAsync(shutdown.Token);
-            if (phones.Count == 0)
-            {
-                Console.WriteLine("未发现手机。按回车重新扫描，输入 q 退出。");
-                if (Console.ReadLine()?.Trim().Equals("q", StringComparison.OrdinalIgnoreCase) != false) break;
-                continue;
-            }
-            for (var index = 0; index < phones.Count; index++)
-                Console.WriteLine($"{index + 1}. {phones[index].Name}（{phones[index].Address:X12}）");
-            Console.Write("选择手机编号（q 退出）：");
-            var choice = Console.ReadLine();
-            if (choice is null || choice.Trim().Equals("q", StringComparison.OrdinalIgnoreCase)) break;
-            if (!int.TryParse(choice, out var number) || number < 1 || number > phones.Count) continue;
-            selected = phones[number - 1];
+            selected = await PhonePicker.SelectAsync(shutdown.Token);
+            if (selected is null) break;
         }
         Console.WriteLine("回车发起新的 10 秒请求，输入 r 重新选手机，k 修改 Key，q 退出。");
         var command = Console.ReadLine()?.Trim();

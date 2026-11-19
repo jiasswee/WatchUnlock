@@ -1,19 +1,27 @@
 # WatchUnlock — quick-reply and BLE prototype
 
-This project contains Android quick-reply validation and a Windows/Android BLE prototype with shared-Key pairing and authenticated messages. The phone validates the reply; Windows verifies the result and will perform final account authentication. The Windows service and Credential Provider are not implemented yet. See [the architecture and development stages](docs/architecture.md).
+This project contains Android quick-reply validation, authenticated BLE communication, and a Windows background authorization service. The phone validates the reply; Windows verifies the result and will perform final account authentication. The Credential Provider is not implemented yet. See [the architecture and development stages](docs/architecture.md).
 
-## BLE communication prototype (0.4.0)
+## Direct BLE communication (Windows 0.5.0, Android 0.4.0)
 
-1. Update **both** the APK and Windows client to 0.4.0. On the phone, enter a pairing Key and tap **保存配对 Key**. The Key must contain 16–128 printable ASCII characters (English letters, digits or symbols), without spaces; use a randomly generated value. This is separate from the confirmation phrase `好` and from your Windows password.
-2. Enable notifications/Bluetooth and tap **开启 BLE 通信测试**. On Android 12 and later, grant Nearby Devices permission and tap the button again. On Windows 11, run `WatchUnlock.BleClient.exe`, enter exactly the same Key, select the phone, and press Enter. Only a successful mutual Key check permits a new 10-second request.
+1. Install Android APK 0.4.0 or later and Windows client 0.5.0. The phone APK/protocol has not changed in 0.5.0. On the phone, enter a pairing Key and tap **保存配对 Key**. The Key must contain 16–128 printable ASCII characters (English letters, digits or symbols), without spaces; use a randomly generated value. This is separate from the confirmation phrase `好` and from your Windows password.
+2. Enable notifications/Bluetooth and tap **开启 BLE 通信测试**. On Android 12 and later, grant Nearby Devices permission and tap the button again. On Windows 11, run `WatchUnlock.BleClient.exe`, press Enter for direct communication, and enter the same Key. Phones appear as soon as discovered; type a displayed number and press Enter immediately. Scanning stops on selection, rescan or exit, with no fixed 8-second wait. Press Enter to request confirmation. Only a successful mutual Key check permits a new 10-second request.
 3. Reply with the saved confirmation phrase from the phone or watch. Windows prints the result. Incorrect, cancelled, disconnected, and expired requests never print approval.
 4. Press Enter to try a new request after a connection failure. Enter `r` to rescan if the phone's Bluetooth address changes, `k` to change the Windows Key, or `q` to quit. Changing the phone Key stops BLE and cancels a pending BLE request; re-enable BLE afterward. Stop the Android service from its notification or the app when finished.
 
-The Key is never sent over BLE. Both sides derive it using PBKDF2-HMAC-SHA256 and establish a fresh session with mutual HMAC proofs. Android stores the derived Key in Android Keystore; Windows keeps it only in process memory, so enter it again after restarting the program. Requests and decisions are authenticated with the session key. Anyone possessing the same Key can connect; this is application pairing, without a Windows Bluetooth pairing dialog. The prototype does not submit Windows credentials or unlock Windows. Actual BLE/background operation must be checked on the devices.
+The Key is never sent over BLE. Both sides derive it using PBKDF2-HMAC-SHA256 and establish a fresh session with mutual HMAC proofs. Android stores the derived Key in Android Keystore. Windows direct mode keeps it only in process memory, so enter it again after restarting the program; the optional service protects its persisted key with machine DPAPI and a restricted file ACL. Requests and decisions are authenticated with the session key. Anyone possessing the same Key can connect; this is application pairing, without a Windows Bluetooth pairing dialog. The prototype does not submit Windows credentials or unlock Windows.
 
 The phone uses a foreground GATT service, one connected client, 20-byte framed chunks, and confirmed indications for results. Process termination invalidates the live transport; enable the service again to recover. Windows enforces its own deadline and binds results to both request ID and random nonce. See [the BLE protocol](docs/ble-protocol.md) and [Windows build/run instructions](windows/README.md).
 
 Windows now displays service discovery, characteristic reads, protocol checking, subscription and Key pairing as separate steps. Connection errors include the failure step, exception type and Windows error code even when the native error message is empty. If the phone remains at **电脑已连接，等待订阅**, retain the complete Windows error to identify which operation failed.
+
+## Optional Windows background service
+
+Windows 0.5.0 includes `service/WatchUnlock.Service.exe` plus installation/removal scripts. Install the service from an administrator terminal, then open the client as administrator and enter `s` to configure a phone. The same menu offers a one-time confirmation request, phone switching, automatic reconnection, and enable/disable controls. Ordinary operations are restricted to the configured Windows user, administrators and the system; configuring a new phone requires elevation.
+
+Automatic reconnection is **off by default**. Enable it for deployment: the service retries with 2/4/8/16/30-second backoff, revalidates the Key after reconnection, and rediscovers a phone whose BLE address changed. Reconnection itself never requests or grants authorization. Switching phones or disabling WatchUnlock cancels current BLE work. Disabling reconnection alone still permits connection on demand for an explicit request.
+
+The service returns a result for the current local pipe request and never keeps a global approval flag. [Service instructions](windows/service.md) cover installation, configuration and limitations. BLE access under LocalSystem/session 0 and while Windows is locked still needs device validation before Credential Provider integration.
 
 ## Quick-reply confirmation
 
@@ -48,6 +56,8 @@ These three diagnostic buttons only record BroadcastReceiver callbacks in the on
 
 The APK is a debug build and is suitable for sideload testing. It is not a Play Store release.
 
+Build runners are pinned to `ubuntu-24.04` and `windows-2025` to avoid automatic OS-version migration. The images' installed tools still receive updates. Gradle 8.9 currently meets Android Gradle Plugin 8.7.3's minimum; an out-of-date notice is not a build failure. Upgrade Gradle together with compatible Android/Kotlin plugins. Read-only caching on a feature branch is the Gradle action's default policy and does not prevent a build.
+
 ## Install and test
 
 1. Install the APK on the Android phone.
@@ -66,6 +76,6 @@ A callback is only confirmed when it appears in the app log. Merely seeing a not
 - Kotlin namespace: `com.watchunlock.app`.
 - Minimum Android version: Android 8.0 (API 26).
 - Target SDK: API 35.
-- Communication is local BLE only; no Internet permission, account passwords, Windows service, or login integration is included. The configured reply is a human confirmation phrase; the separate Key authenticates BLE communication.
+- Communication is local BLE only. The APK needs no Internet permission. Windows includes an optional authorization service; account passwords and login integration are not included yet. The configured reply is a human confirmation phrase; the separate Key authenticates BLE communication.
 - RemoteInput uses a mutable PendingIntent as required for inline reply delivery.
 - Unlock replies use an explicit, one-shot PendingIntent with a unique request URI. The receiver is not exported, and stale callbacks cannot approve a newer request.

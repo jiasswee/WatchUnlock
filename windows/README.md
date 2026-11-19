@@ -1,12 +1,12 @@
 # Windows BLE communication prototype
 
-`WatchUnlock.BleClient` is a .NET 8 console program for authenticated BLE notification requests. It does not install a service, register a Credential Provider, store an account password, or unlock Windows.
+`WatchUnlock.BleClient` 0.5.0 provides direct BLE requests and management of the optional Windows service. Neither executable registers a Credential Provider, stores an account password, or unlocks Windows. See [background service instructions](service.md).
 
 ## Use the GitHub artifact
 
-Run the existing **Android APK** workflow against the desired branch. The workflow builds both Android and Windows. Download and extract `WatchUnlock-Windows-BLE-client`, then run `WatchUnlock.BleClient.exe`. Keep all files from the extracted folder together. The Windows x64 artifact includes the .NET runtime.
+Run the existing **Android APK** workflow against the desired branch. The workflow builds Android, the Windows client and service. Download and extract `WatchUnlock-Windows-BLE-client`, then run `WatchUnlock.BleClient.exe`. Keep the extracted files together. The Windows x64 executables include their .NET runtimes. Press Enter for direct BLE communication or `s` for service management.
 
-Install **both** 0.4.0 programs; earlier protocol versions are incompatible. Enable Bluetooth on both devices. On Android, save a pairing Key of 16–128 printable ASCII characters (English letters, digits or symbols, no spaces), allow notifications and Nearby Devices access, save the accepted reply, and enable BLE. On Windows, enter exactly the same Key into the masked prompt, select the phone, then press Enter. Mutual Key verification must succeed before sending a request. Replies from the phone and watch follow the same rule; the confirmation phrase defaults to `好` and is separate from the Key.
+Use Android 0.4.0 or later with Windows 0.5.0; both use BLE v2. Enable Bluetooth on both devices. On Android, save a pairing Key of 16–128 printable ASCII characters (English letters, digits or symbols, no spaces), allow notifications and Nearby Devices access, save the accepted reply, and enable BLE. In Windows direct mode, enter exactly the same Key into the masked prompt. Discovery streams phones immediately with stable numbers; choose any displayed number and press Enter without waiting for the scan to finish. `r` restarts scanning and `q` exits even when no phones have been found. Mutual Key verification must succeed before sending a request. Replies from the phone and watch follow the same rule; the confirmation phrase defaults to `好` and is separate from the Key.
 
 The Key is never transmitted over BLE. Android stores derived key material in Keystore; Windows keeps it only in memory and asks again after restart. Use `k` to replace the Windows Key. Changing the Android Key stops BLE and cancels a pending BLE request; re-enable BLE to reconnect. This is application-level pairing and does not require a Windows Bluetooth pairing dialog.
 
@@ -29,4 +29,4 @@ To create the same self-contained x64 folder as GitHub Actions:
 dotnet publish windows/WatchUnlock.BleClient/WatchUnlock.BleClient.csproj --configuration Release --runtime win-x64 --self-contained true --output dist/windows-ble
 ```
 
-For the later Windows service, validate BLE access under the intended service account and add protected Key persistence plus account/session binding. A console application running in a user session does not establish that the service can communicate at the login screen. See [protocol v2](../docs/ble-protocol.md) for authentication and message framing.
+The service source is `windows/WatchUnlock.Service/WatchUnlock.Service.csproj` and reuses the same BLE source files. Publish it into `dist/windows-ble/service`, then include the two scripts from `windows/`. The service's protected Key persistence and local pipe checks prepare for account integration; BLE access under LocalSystem while locked still requires hardware validation. See [protocol v2](../docs/ble-protocol.md) for authentication and message framing.

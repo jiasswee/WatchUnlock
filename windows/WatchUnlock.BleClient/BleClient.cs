@@ -3,7 +3,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Windows.Devices.Bluetooth;
-using Windows.Devices.Bluetooth.Advertisement;
 using Windows.Devices.Bluetooth.GenericAttributeProfile;
 using Windows.Storage.Streams;
 
@@ -36,6 +35,10 @@ internal sealed class BleClient : IDisposable
     private string? sessionId;
     private byte[]? sessionKey;
     private bool disposed;
+    internal bool IsConnected
+    {
+        get { lock (responseLock) return !disposed && sessionKey is not null && device.ConnectionStatus == BluetoothConnectionStatus.Connected; }
+    }
 
     private BleClient(BluetoothLEDevice device, GattDeviceService service,
         GattCharacteristic challenge, GattCharacteristic approval)
@@ -46,37 +49,6 @@ internal sealed class BleClient : IDisposable
         this.approval = approval;
         approval.ValueChanged += OnValueChanged;
         device.ConnectionStatusChanged += OnConnectionChanged;
-    }
-
-    internal static async Task<IReadOnlyList<Phone>> DiscoverAsync(CancellationToken token)
-    {
-        var adapter = await BluetoothAdapter.GetDefaultAsync().AsTask(token);
-        if (adapter is null || !adapter.IsLowEnergySupported)
-            throw new InvalidOperationException("电脑没有可用的 BLE 适配器。");
-        var phones = new Dictionary<ulong, Phone>();
-        var gate = new object();
-        var stopped = new TaskCompletionSource<BluetoothError>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var watcher = new BluetoothLEAdvertisementWatcher { ScanningMode = BluetoothLEScanningMode.Active };
-        watcher.AdvertisementFilter.Advertisement.ServiceUuids.Add(ServiceId);
-        watcher.Received += (_, args) =>
-        {
-            lock (gate)
-            {
-                phones[args.BluetoothAddress] = new Phone(args.BluetoothAddress, args.BluetoothAddressType,
-                    string.IsNullOrWhiteSpace(args.Advertisement.LocalName) ? "WatchUnlock 手机" : args.Advertisement.LocalName);
-            }
-        };
-        watcher.Stopped += (_, args) => stopped.TrySetResult(args.Error);
-        watcher.Start();
-        try
-        {
-            await Task.WhenAny(Task.Delay(TimeSpan.FromSeconds(8), token), stopped.Task);
-            token.ThrowIfCancellationRequested();
-            if (stopped.Task.IsCompleted && await stopped.Task != BluetoothError.Success)
-                throw new InvalidOperationException("蓝牙扫描失败，请开启电脑蓝牙并检查隐私权限。");
-            lock (gate) return phones.Values.OrderBy(phone => phone.Address).ToArray();
-        }
-        finally { watcher.Stop(); }
     }
 
     internal static async Task<BleClient> ConnectAsync(Phone phone, byte[] pairingKey, CancellationToken token, Action<string> progress)
@@ -131,7 +103,7 @@ internal sealed class BleClient : IDisposable
                 Quietly(() => device?.Dispose());
             }
             if (token.IsCancellationRequested)
-                throw new OperationCanceledException($"[{stage}] 连接已取消或超过 60 秒。", error, token);
+                throw new OperationCanceledException($"[{stage}] 连接已取消或超时。", error, token);
             if (error is OperationCanceledException)
                 throw new TimeoutException($"[{stage}] Key 配对超过 35 秒，请重新连接。", error);
             throw new IOException($"[{stage}] {ErrorInfo.Describe(error)}", error);

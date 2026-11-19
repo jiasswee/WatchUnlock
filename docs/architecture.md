@@ -8,7 +8,7 @@ The phone validates a human confirmation; Windows verifies the authorization and
 | --- | --- | --- |
 | Watch Fit 3 | Display a notification and send a quick reply | This APK's callback path requires device validation |
 | Android APK (Kotlin) | Validate the reply and active request; authenticate BLE requests and responses | Reply validation, foreground GATT server, Keystore Key pairing and HMAC implemented; device validation pending |
-| Windows background service (C++ or C#) | Generate challenges, communicate over BLE, validate responses and deadlines | C# console client implements mutual Key pairing and signed results; service planned |
+| Windows background service (C#) | Generate challenges, communicate over BLE, validate responses and deadlines | Service with protected Key persistence, ACL/token-checked pipe, optional reconnect and mode controls implemented; session-0 hardware validation pending |
 | Credential Provider V2 DLL (C++) | Offer a login/unlock tile and submit credentials to Windows authentication | Planned |
 
 The current APK emits its own notification and receives its `RemoteInput` callback. Listening to unrelated apps' notifications is unnecessary for this path. For this personal-use project, replies from either the phone or the watch are accepted. Distinguishing their origin is not required; both follow the same phrase, deadline, and single-use checks.
@@ -25,7 +25,7 @@ The current APK emits its own notification and receives its `RemoteInput` callba
 
 ## Authenticated BLE communication
 
-Android server and Windows console client 0.4.0 implement the authenticated [v2 protocol](ble-protocol.md). Use both updated programs to validate device communication before Windows login integration.
+Android server 0.4.0 and Windows client/service 0.5.0 implement the authenticated [v2 protocol](ble-protocol.md). Direct BLE communication and Key pairing have run successfully on the user's devices. The new service still needs device validation before Windows login integration.
 
 Android is the BLE GATT server and advertises a dedicated service. Windows is the GATT client and discovers/connects to the paired phone. No router, Internet connection, or EasyTier is needed.
 
@@ -37,7 +37,7 @@ Android is the BLE GATT server and advertises a dedicated service. Windows is th
 
 Messages are flat UTF-8 JSON followed by LF, with a 4096-byte frame limit and 20-byte GATT chunks. Results use acknowledged, serialized indications. All mutable Android transport state runs on the main handler; the foreground service owns the connection outside the Activity.
 
-The user enters the same 16–128-character printable ASCII Key on both devices. PBKDF2-HMAC-SHA256 derives the long-term key; Android imports it into Keystore and Windows keeps it in memory for the current run. A four-message HMAC handshake proves mutual possession and derives a fresh session key from client/server random nonces. No Key is transmitted over BLE. Use a randomly generated Key separate from `好`, the Windows password and Bluetooth address. Key possession defines the pairing identity; a device with the same Key can connect. Windows protected persistence and account/device identity binding remain work for the service phase.
+The user enters the same 16–128-character printable ASCII Key on both devices. PBKDF2-HMAC-SHA256 derives the long-term key; Android imports it into Keystore. Windows direct mode keeps it in memory, while the service persists machine-DPAPI ciphertext with a System/Administrators-only ACL and binds management access to the configured user's token SID. A four-message HMAC handshake proves mutual possession and derives a fresh session key from client/server random nonces. No Key is transmitted over BLE. Use a randomly generated Key separate from `好`, the Windows password and Bluetooth address. Key possession defines the pairing identity; a device with the same Key can connect.
 
 Both challenges and responses use HMAC-SHA256 over the canonical bytes defined in the protocol. These bind version, message type, current session, request ID, random 256-bit nonce, request lifetime or decision, and display name where applicable. Windows checks the MAC, outstanding request and monotonic deadline. Invalid signatures, mismatched requests and expired results cannot confirm approval. The application authenticates messages but does not encrypt GATT payloads or require OS Bluetooth bonding; a live relay is outside the prototype's protection.
 
@@ -45,9 +45,9 @@ Keep BLE/background work outside the Activity. Check GATT server/advertising sup
 
 ## Windows authentication (planned)
 
-The background service owns challenges, BLE communication, protocol validation, and the account/session binding. The Credential Provider communicates with it over an ACL-protected named pipe. Authorization must be tied to the requesting account and session, with no reusable global `approved` flag.
+The background service owns challenges, BLE communication and protocol validation. It implements a token-checked, ACL-protected named pipe and obtains callers' session IDs from Windows. Optional background reconnection, phone switching and a persistent enabled/disabled setting are available through the client; see [service deployment](../windows/service.md). The Credential Provider will use this boundary after final account/session and credential-submission rules are implemented. There is no reusable global `approved` flag.
 
-A Credential Provider serializes credentials; Windows LSA performs authentication. Choose the final credential scheme before implementing the provider. A prototype using a recoverable encrypted account password requires a specific storage/access policy; DPAPI alone is not a complete security design. A custom authentication package is a separate, more complex project.
+A Credential Provider serializes credentials; Windows LSA performs authentication. The user's initial target is a local Windows account. A prototype using a recoverable encrypted account password requires a specific storage/access policy; DPAPI alone is not a complete security design. No account password is stored yet. A custom authentication package is a separate, more complex project.
 
 Keep the built-in Windows credential providers enabled. Verify supported logon/unlock usage scenarios on the target Windows 11 version and validate the provider in a recoverable environment before deployment. Communication failures must leave native login options usable.
 
@@ -56,7 +56,7 @@ Keep the built-in Windows credential providers enabled. Verify supported logon/u
 1. **Reply path:** use this APK on OnePlus Ace 3 and Watch Fit 3. Confirm that a watch reply reaches the app and that matching, incorrect, expired, and stale replies have the intended outcomes.
 2. **BLE transport:** implement Android GATT server and Windows GATT client, discovery, reconnect, and framed challenge/result exchange without unlocking Windows.
 3. **Protocol:** shared-Key pairing, authenticated messages and independent deadlines are implemented in 0.4.0; validate them on devices and define persistent account/device binding for Windows integration.
-4. **Windows integration:** implement the service and Credential Provider after settling the credential-storage scheme. Connect a successful, current authorization to Windows credential submission.
+4. **Windows integration:** validate the implemented service under LocalSystem and while locked, then implement the local-account Credential Provider and protected credential storage. Connect a successful, current authorization to Windows credential submission.
 5. **Reliability and recovery:** check Bluetooth/range loss, watch disconnection, phone termination, reboot, malformed messages and replay, and Windows recovery/native sign-in options.
 
 ## Official references

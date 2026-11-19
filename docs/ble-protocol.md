@@ -21,7 +21,7 @@ Android clears incomplete incoming bytes after a 5-second gap between writes. Pr
 
 Enter the same Key on both devices: 16–128 printable ASCII characters in range 33–126, with no spaces. Use a random Key distinct from the confirmation phrase and Windows credentials. Derive the 32-byte long-term key with PBKDF2-HMAC-SHA256, 210000 iterations, and UTF-8 salt `WatchUnlock pairing v2`. Restricting the input to ASCII gives identical password bytes on both platforms.
 
-Android imports the derived HMAC key into Android Keystore (`watchunlock-pairing-v2`); preferences retain only a random configuration version. Windows holds the derived key only in process memory and clears it on exit or replacement. The input Key, derived long-term key and session key are never sent over BLE. Changing the Android Key stops BLE and cancels a pending BLE request.
+Android imports the derived HMAC key into Android Keystore (`watchunlock-pairing-v2`); preferences retain only a random configuration version. Windows direct mode holds the derived key only in process memory and clears it on exit or replacement. The optional Windows 0.5.0 service stores a machine-DPAPI-protected derived Key with restricted ACLs and sends configuration over its authenticated local pipe; see [service deployment](../windows/service.md). The input Key, derived long-term key and session key are never sent over BLE. Changing the Android Key stops BLE and cancels a pending BLE request.
 
 `MAC(domain, fields...)` means Base64 encoding of HMAC-SHA256 over these UTF-8 bytes:
 
