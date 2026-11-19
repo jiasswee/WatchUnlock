@@ -1,14 +1,17 @@
 using System.Text;
+using System.Security.Cryptography;
 using WatchUnlock.BleClient;
 
 Console.OutputEncoding = Encoding.UTF8;
-Console.WriteLine("WatchUnlock BLE 通信测试：只验证通知回复，不执行 Windows 解锁。");
-Console.WriteLine("请在手机上开启 BLE 通信测试，并允许通知和附近设备权限。");
+Console.WriteLine($"WatchUnlock {typeof(BleClient).Assembly.GetName().Version?.ToString(3)} BLE 通信测试：只验证通知回复，不执行 Windows 解锁。");
+Console.WriteLine("请安装 0.4.0 或更新版本，在手机保存配对 Key，并开启 BLE、通知和附近设备权限。");
 using var shutdown = new CancellationTokenSource();
 Console.CancelKeyPress += (_, eventArgs) => { eventArgs.Cancel = true; shutdown.Cancel(); };
 Phone? selected = null;
+byte[]? pairingKey = null;
 try
 {
+    pairingKey = PairingProtocol.ReadKey();
     while (!shutdown.IsCancellationRequested)
     {
         if (selected is null)
@@ -29,16 +32,25 @@ try
             if (!int.TryParse(choice, out var number) || number < 1 || number > phones.Count) continue;
             selected = phones[number - 1];
         }
-        Console.WriteLine("回车发起新的 10 秒请求，输入 r 重新选手机，输入 q 退出。");
+        Console.WriteLine("回车发起新的 10 秒请求，输入 r 重新选手机，k 修改 Key，q 退出。");
         var command = Console.ReadLine()?.Trim();
         if (command is null || command.Equals("q", StringComparison.OrdinalIgnoreCase)) break;
         if (command.Equals("r", StringComparison.OrdinalIgnoreCase)) { selected = null; continue; }
+        if (command.Equals("k", StringComparison.OrdinalIgnoreCase))
+        {
+            CryptographicOperations.ZeroMemory(pairingKey);
+            pairingKey = PairingProtocol.ReadKey();
+            selected = null;
+            continue;
+        }
+        if (command.Length != 0) continue;
         try
         {
             using var connectDeadline = CancellationTokenSource.CreateLinkedTokenSource(shutdown.Token);
-            connectDeadline.CancelAfter(TimeSpan.FromSeconds(15));
-            using var client = await BleClient.ConnectAsync(selected, connectDeadline.Token);
-            Console.WriteLine("电脑已连接，请在收到通知后从手机或手表回复已设置的文字。");
+            connectDeadline.CancelAfter(TimeSpan.FromSeconds(60));
+            using var client = await BleClient.ConnectAsync(selected, pairingKey, connectDeadline.Token,
+                step => Console.WriteLine($"连接步骤：{step}……"));
+            Console.WriteLine("Key 配对成功，正在发起请求；请从手机或手表回复已设置的文字。");
             var decision = await client.RequestAsync(10, shutdown.Token);
             Console.WriteLine(decision switch
             {
@@ -50,11 +62,12 @@ try
                 _ => "请求已取消或作废。"
             });
         }
-        catch (OperationCanceledException) when (!shutdown.IsCancellationRequested)
-        { Console.WriteLine("连接超时。下次发起会重新连接；手机地址变化时输入 r 重新扫描。"); }
+        catch (OperationCanceledException error) when (!shutdown.IsCancellationRequested)
+        { Console.WriteLine($"连接超时：{ErrorInfo.Describe(error)} 下次发起会重新连接；手机地址变化时输入 r 重新扫描。"); }
         catch (Exception error) when (!shutdown.IsCancellationRequested)
-        { Console.WriteLine($"通信失败：{error.Message} 下次发起会重新连接。"); }
+        { Console.WriteLine($"通信失败：{ErrorInfo.Describe(error)} 下次发起会重新连接；Key 不一致时输入 k 修改。"); }
     }
 }
 catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { }
-catch (Exception error) { Console.Error.WriteLine($"无法继续：{error.Message}"); Environment.ExitCode = 1; }
+catch (Exception error) { Console.Error.WriteLine($"无法继续：{ErrorInfo.Describe(error)}"); Environment.ExitCode = 1; }
+finally { if (pairingKey is not null) CryptographicOperations.ZeroMemory(pairingKey); }

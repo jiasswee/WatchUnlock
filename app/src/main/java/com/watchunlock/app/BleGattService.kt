@@ -33,6 +33,9 @@ import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import java.util.ArrayDeque
+import java.security.SecureRandom
+import android.util.Base64
+import org.json.JSONObject
 
 /** Foreground BLE transport demo. All mutable GATT/request state is confined to the main thread. */
 @SuppressLint("MissingPermission") // The Activity grants CONNECT/ADVERTISE before starting this service.
@@ -42,6 +45,13 @@ class BleGattService : Service() {
     private var advertiser: BluetoothLeAdvertiser? = null
     private var peer: BluetoothDevice? = null
     private var subscribed = false
+    private var connectedAt = 0L
+    private var closeAfterSending = false
+    private var keyVersion: String? = null
+    private var sessionId: String? = null
+    private var sessionKey: ByteArray? = null
+    private data class Pairing(val id: String, val clientNonce: String, val serverNonce: String, val deadline: Long)
+    private var pairing: Pairing? = null
     private var pending: BleProtocol.Challenge? = null
     private val reader = BleProtocol.FrameReader()
     private var lastWrite = 0L
@@ -60,6 +70,11 @@ class BleGattService : Service() {
 
     private val completionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            if (keyVersion != PairingKey(this@BleGattService).version) {
+                peer?.let { disconnect(it) }
+                clearConnection()
+                return
+            }
             val challenge = pending ?: return
             if (intent.getStringExtra(UnlockRequestStore.EXTRA_REQUEST_ID) != challenge.id) return
             val state = UnlockRequestStore.State.entries.firstOrNull {
@@ -68,7 +83,7 @@ class BleGattService : Service() {
             if (state == UnlockRequestStore.State.PENDING) return
             pending = null
             queueResult(challenge, state.name.lowercase(java.util.Locale.ROOT))
-            updateStatus("已连接，等待电脑请求")
+            updateStatus("Key 配对成功，等待电脑请求")
         }
     }
 
@@ -109,6 +124,7 @@ class BleGattService : Service() {
                         disconnect(device)
                     } else {
                         peer = device
+                        connectedAt = SystemClock.elapsedRealtime()
                         updateStatus("电脑已连接，等待订阅")
                     }
                 } else if (peer == device && newState == BluetoothProfile.STATE_DISCONNECTED) {
@@ -134,10 +150,16 @@ class BleGattService : Service() {
                         bytes.contentEquals(BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE))
                 if (valid) {
                     subscribed = bytes.contentEquals(BluetoothGattDescriptor.ENABLE_INDICATION_VALUE)
-                    if (!subscribed) clearConnection()
-                    else updateStatus("已连接，等待电脑请求")
                 }
                 if (responseNeeded) respond(device, requestId, valid)
+                if (valid) {
+                    if (!subscribed) {
+                        disconnect(device)
+                        clearConnection()
+                        updateStatus("订阅已取消，等待重新连接")
+                    }
+                    else updateStatus("已订阅，等待 Key 配对")
+                }
             }
         }
 
@@ -145,7 +167,7 @@ class BleGattService : Service() {
             characteristic: BluetoothGattCharacteristic) {
             handler.post {
                 val valid = peer == device && characteristic.uuid == BleProtocol.STATUS && offset == 0
-                respond(device, requestId, valid, "transport-v1".toByteArray(Charsets.UTF_8))
+                respond(device, requestId, valid, "paired-v2".toByteArray(Charsets.UTF_8))
             }
         }
 
@@ -155,20 +177,16 @@ class BleGattService : Service() {
             val bytes = value.copyOf()
             handler.post {
                 val valid = peer == device && !preparedWrite && offset == 0 && bytes.size <= BleProtocol.CHUNK_BYTES &&
-                    ((characteristic.uuid == BleProtocol.CHALLENGE && subscribed) || characteristic.uuid == BleProtocol.STATUS)
+                    characteristic.uuid == BleProtocol.CHALLENGE && subscribed && !closeAfterSending
                 if (responseNeeded) respond(device, requestId, valid)
                 if (!valid) return@post
-                if (characteristic.uuid == BleProtocol.STATUS) {
-                    if (bytes.contentEquals("cancel".toByteArray(Charsets.UTF_8))) cancelPending()
-                    return@post
-                }
                 try {
                     if (SystemClock.elapsedRealtime() - lastWrite > 5000) reader.clear()
                     lastWrite = SystemClock.elapsedRealtime()
-                    for (message in reader.append(bytes)) handleChallenge(BleProtocol.parseChallenge(message))
+                    for (message in reader.append(bytes)) handleMessage(BleProtocol.parseMessage(message))
                 } catch (_: Exception) {
                     reader.clear()
-                    ActionReceiver.record(this@BleGattService, "已拒绝格式错误或过大的 BLE 消息")
+                    ActionReceiver.record(this@BleGattService, "已拒绝格式错误、过大或签名无效的 BLE 消息")
                     disconnect(device)
                     clearConnection()
                 }
@@ -179,7 +197,12 @@ class BleGattService : Service() {
             handler.post {
                 if (peer != device || !sending) return@post
                 sending = false
-                if (status == BluetoothGatt.GATT_SUCCESS) sendNext()
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    if (outgoing.isEmpty() && closeAfterSending) {
+                        disconnect(device)
+                        clearConnection()
+                    } else sendNext()
+                }
                 else {
                     disconnect(device)
                     clearConnection()
@@ -192,6 +215,18 @@ class BleGattService : Service() {
     private val tick = object : Runnable {
         override fun run() {
             UnlockRequestStore(this@BleGattService).current() // Reconciles expiry even when the Activity is closed.
+            val now = SystemClock.elapsedRealtime()
+            if (peer != null && keyVersion != PairingKey(this@BleGattService).version) {
+                peer?.let { disconnect(it) }
+                clearConnection()
+                updateStatus("Key 已修改，请重新连接配对")
+            }
+            if (pairing?.let { now >= it.deadline } == true && !closeAfterSending) pairFailed("expired")
+            if (peer != null && sessionKey == null && now - connectedAt > 60000) {
+                peer?.let { disconnect(it) }
+                clearConnection()
+                updateStatus("配对未完成，连接已释放")
+            }
             if (sending && SystemClock.elapsedRealtime() - sentAt > 5000) {
                 peer?.let { disconnect(it) }
                 clearConnection()
@@ -240,6 +275,12 @@ class BleGattService : Service() {
                 return START_NOT_STICKY
             }
             val store = UnlockRequestStore(this)
+            val configuredKey = PairingKey(this)
+            if (!configuredKey.configured()) {
+                fail("请先保存配对 Key")
+                return START_NOT_STICKY
+            }
+            keyVersion = configuredKey.version
             if (store.current()?.source == UnlockRequestStore.Source.BLE) store.cancel()
             server = getSystemService(BluetoothManager::class.java).openGattServer(this, gattCallback)
             val service = BluetoothGattService(BleProtocol.SERVICE, BluetoothGattService.SERVICE_TYPE_PRIMARY).apply {
@@ -247,8 +288,7 @@ class BleGattService : Service() {
                     BluetoothGattCharacteristic.PROPERTY_WRITE, BluetoothGattCharacteristic.PERMISSION_WRITE))
                 addCharacteristic(approval)
                 addCharacteristic(BluetoothGattCharacteristic(BleProtocol.STATUS,
-                    BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_WRITE,
-                    BluetoothGattCharacteristic.PERMISSION_READ or BluetoothGattCharacteristic.PERMISSION_WRITE))
+                    BluetoothGattCharacteristic.PROPERTY_READ, BluetoothGattCharacteristic.PERMISSION_READ))
             }
             if (server?.addService(service) != true) fail("无法创建 GATT 服务")
             else {
@@ -262,13 +302,69 @@ class BleGattService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    private fun handleMessage(value: JSONObject) {
+        val key = PairingKey(this)
+        require(keyVersion == key.version && !closeAfterSending)
+        when (value.getString("type")) {
+            "pair_request" -> {
+                BleProtocol.fields(value, "request_id", "client_nonce", "mac")
+                require(sessionKey == null && pairing == null && outgoing.isEmpty() && !sending)
+                val id = BleProtocol.uuid(value.getString("request_id"))
+                val clientNonce = value.getString("client_nonce").also { BleProtocol.base64Bytes(it) }
+                if (!key.verify(value.getString("mac"), "pair_request", id, clientNonce)) {
+                    pairFailed("key_mismatch")
+                    return
+                }
+                val serverNonce = Base64.encodeToString(ByteArray(32).also { SecureRandom().nextBytes(it) }, Base64.NO_WRAP)
+                pairing = Pairing(id, clientNonce, serverNonce, SystemClock.elapsedRealtime() + 30000)
+                queueMessage(JSONObject().put("v", 2).put("type", "pair_challenge").put("request_id", id)
+                    .put("client_nonce", clientNonce).put("server_nonce", serverNonce)
+                    .put("mac", key.sign("pair_challenge", id, clientNonce, serverNonce)))
+                updateStatus("Key 校验中，等待电脑确认")
+            }
+            "pair_confirm" -> {
+                BleProtocol.fields(value, "request_id", "client_nonce", "server_nonce", "mac")
+                val expected = pairing ?: error("No pairing request")
+                require(SystemClock.elapsedRealtime() < expected.deadline)
+                require(value.getString("request_id") == expected.id && value.getString("client_nonce") == expected.clientNonce &&
+                    value.getString("server_nonce") == expected.serverNonce)
+                if (!key.verify(value.getString("mac"), "pair_confirm", expected.id, expected.clientNonce, expected.serverNonce)) {
+                    pairFailed("key_mismatch")
+                    return
+                }
+                sessionKey = key.sessionKey(expected.id, expected.clientNonce, expected.serverNonce)
+                sessionId = expected.id
+                pairing = null
+                queueMessage(JSONObject().put("v", 2).put("type", "pair_ok").put("request_id", expected.id)
+                    .put("client_nonce", expected.clientNonce).put("server_nonce", expected.serverNonce)
+                    .put("mac", key.sign("pair_ok", expected.id, expected.clientNonce, expected.serverNonce)))
+                updateStatus("Key 配对成功，等待电脑请求")
+                ActionReceiver.record(this, "电脑与手机 Key 配对成功")
+            }
+            "unlock_request" -> {
+                val id = sessionId ?: error("Not paired")
+                val activeKey = sessionKey ?: error("Not paired")
+                handleChallenge(BleProtocol.parseChallenge(value, id, activeKey))
+            }
+            else -> error("Unsupported message")
+        }
+    }
+
+    private fun pairFailed(reason: String) {
+        pairing = null
+        closeAfterSending = true
+        ActionReceiver.record(this, if (reason == "key_mismatch") "Key 不一致，配对失败" else "Key 配对超时")
+        updateStatus("Key 配对失败，请检查两端设置")
+        queueMessage(JSONObject().put("v", 2).put("type", "pair_error").put("reason", reason))
+    }
+
     private fun handleChallenge(challenge: BleProtocol.Challenge) {
         if (seenRequests.contains(challenge.id)) {
             ActionReceiver.record(this, "已忽略重复 BLE 请求")
             return
         }
-        if (pending != null || outgoing.isNotEmpty() || sending || UnlockRequestStore(this).current()?.state == UnlockRequestStore.State.PENDING) {
-            // Do not interleave reply frames or replace a still-pending request.
+        if (pending != null || UnlockRequestStore(this).current()?.state == UnlockRequestStore.State.PENDING) {
+            // Avoid building a queue of busy responses while a result is still being sent.
             if (!sending && outgoing.isEmpty()) queueResult(challenge, "busy")
             return
         }
@@ -293,8 +389,13 @@ class BleGattService : Service() {
     private fun notificationsEnabled() = androidx.core.app.NotificationManagerCompat.from(this).areNotificationsEnabled()
 
     private fun queueResult(challenge: BleProtocol.Challenge, decision: String) {
+        val key = sessionKey ?: return
+        queueMessage(BleProtocol.result(challenge, decision, key))
+    }
+
+    private fun queueMessage(value: JSONObject) {
         if (peer == null || !subscribed) return
-        for (chunk in BleProtocol.result(challenge, decision).asList().chunked(BleProtocol.CHUNK_BYTES)) {
+        for (chunk in BleProtocol.frame(value).asList().chunked(BleProtocol.CHUNK_BYTES)) {
             outgoing.addLast(chunk.toByteArray())
         }
         sendNext()
@@ -335,6 +436,12 @@ class BleGattService : Service() {
         subscribed = false
         outgoing.clear()
         sending = false
+        closeAfterSending = false
+        sessionKey?.fill(0)
+        sessionKey = null
+        sessionId = null
+        pairing = null
+        seenRequests.clear()
         reader.clear()
         cancelPending()
         pending = null

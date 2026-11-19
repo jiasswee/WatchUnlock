@@ -1,17 +1,19 @@
 # WatchUnlock — quick-reply and BLE prototype
 
-This project contains Android quick-reply validation and a Windows/Android BLE transport prototype. The phone validates the reply; Windows will perform final authentication. Cryptographic pairing, the Windows service, and the Credential Provider are not implemented yet. See [the architecture and development stages](docs/architecture.md).
+This project contains Android quick-reply validation and a Windows/Android BLE prototype with shared-Key pairing and authenticated messages. The phone validates the reply; Windows verifies the result and will perform final account authentication. The Windows service and Credential Provider are not implemented yet. See [the architecture and development stages](docs/architecture.md).
 
-## BLE communication prototype (0.3.0)
+## BLE communication prototype (0.4.0)
 
-1. Install the APK, enable notifications/Bluetooth, and tap **开启 BLE 通信测试**. On Android 12 and later, grant Nearby Devices permission and tap the button again.
-2. On Windows 11, run `WatchUnlock.BleClient.exe` from the Windows artifact, select the phone, and press Enter to issue a new 10-second request.
+1. Update **both** the APK and Windows client to 0.4.0. On the phone, enter a pairing Key and tap **保存配对 Key**. The Key must contain 16–128 printable ASCII characters (English letters, digits or symbols), without spaces; use a randomly generated value. This is separate from the confirmation phrase `好` and from your Windows password.
+2. Enable notifications/Bluetooth and tap **开启 BLE 通信测试**. On Android 12 and later, grant Nearby Devices permission and tap the button again. On Windows 11, run `WatchUnlock.BleClient.exe`, enter exactly the same Key, select the phone, and press Enter. Only a successful mutual Key check permits a new 10-second request.
 3. Reply with the saved confirmation phrase from the phone or watch. Windows prints the result. Incorrect, cancelled, disconnected, and expired requests never print approval.
-4. Press Enter to try a new request after a connection failure. Enter `r` to rescan if the phone's Bluetooth address changes, or `q` to quit. Stop the Android service from its notification or the app when finished.
+4. Press Enter to try a new request after a connection failure. Enter `r` to rescan if the phone's Bluetooth address changes, `k` to change the Windows Key, or `q` to quit. Changing the phone Key stops BLE and cancels a pending BLE request; re-enable BLE afterward. Stop the Android service from its notification or the app when finished.
 
-This is an **unauthenticated communication prototype**, not a Windows unlock mechanism. A nearby client can send test requests while the phone service is enabled. It carries no passwords/keys and cannot submit Windows credentials. Key pairing and authenticated messages are the next stage. Actual BLE/background operation must be checked on the devices.
+The Key is never sent over BLE. Both sides derive it using PBKDF2-HMAC-SHA256 and establish a fresh session with mutual HMAC proofs. Android stores the derived Key in Android Keystore; Windows keeps it only in process memory, so enter it again after restarting the program. Requests and decisions are authenticated with the session key. Anyone possessing the same Key can connect; this is application pairing, without a Windows Bluetooth pairing dialog. The prototype does not submit Windows credentials or unlock Windows. Actual BLE/background operation must be checked on the devices.
 
 The phone uses a foreground GATT service, one connected client, 20-byte framed chunks, and confirmed indications for results. Process termination invalidates the live transport; enable the service again to recover. Windows enforces its own deadline and binds results to both request ID and random nonce. See [the BLE protocol](docs/ble-protocol.md) and [Windows build/run instructions](windows/README.md).
+
+Windows now displays service discovery, characteristic reads, protocol checking, subscription and Key pairing as separate steps. Connection errors include the failure step, exception type and Windows error code even when the native error message is empty. If the phone remains at **电脑已连接，等待订阅**, retain the complete Windows error to identify which operation failed.
 
 ## Quick-reply confirmation
 
@@ -64,6 +66,6 @@ A callback is only confirmed when it appears in the app log. Merely seeing a not
 - Kotlin namespace: `com.watchunlock.app`.
 - Minimum Android version: Android 8.0 (API 26).
 - Target SDK: API 35.
-- Communication is local BLE only; no Internet permission, account passwords, Windows service, or login integration is included. The configured reply is a human confirmation phrase, not a pairing key or Windows credential.
+- Communication is local BLE only; no Internet permission, account passwords, Windows service, or login integration is included. The configured reply is a human confirmation phrase; the separate Key authenticates BLE communication.
 - RemoteInput uses a mutable PendingIntent as required for inline reply delivery.
 - Unlock replies use an explicit, one-shot PendingIntent with a unique request URI. The receiver is not exported, and stale callbacks cannot approve a newer request.

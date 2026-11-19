@@ -57,8 +57,47 @@ class MainActivity : Activity(), SharedPreferences.OnSharedPreferenceChangeListe
         }
         content.addView(description)
 
+        content.addView(TextView(this).apply { text = "配对 Key（两端一致，16～128 位英文、数字或符号，无空格）" })
+        val keyInput = EditText(this).apply {
+            setSingleLine(true)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            filters = arrayOf(InputFilter.LengthFilter(128))
+            hint = if (runCatching { PairingKey(this@MainActivity).configured() }.getOrDefault(false)) "已保存；输入新 Key 可覆盖" else "请输入配对 Key"
+        }
+        content.addView(keyInput)
+        val saveKeyButton = Button(this).apply { text = "保存配对 Key" }
+        saveKeyButton.setOnClickListener {
+            val chars = CharArray(keyInput.text.length) { keyInput.text[it] }
+            if (chars.size !in 16..128 || chars.any { it.code !in 33..126 }) {
+                chars.fill('\u0000')
+                Toast.makeText(this, "Key 须为 16～128 位英文、数字或符号，不能含空格", Toast.LENGTH_LONG).show()
+            } else {
+                val store = UnlockRequestStore(this)
+                if (store.current()?.source == UnlockRequestStore.Source.BLE) store.cancel()
+                stopService(Intent(this, BleGattService::class.java))
+                keyInput.text.clear()
+                keyInput.isEnabled = false
+                saveKeyButton.isEnabled = false
+                Thread {
+                    val saved = runCatching { PairingKey(applicationContext).save(chars) }.isSuccess
+                    chars.fill('\u0000')
+                    runOnUiThread {
+                        saveKeyButton.isEnabled = true
+                        keyInput.isEnabled = true
+                        keyInput.hint = if (saved) "已保存；输入新 Key 可覆盖" else "保存失败，请重新输入"
+                        Toast.makeText(this, if (saved) "Key 已保存，请重新开启 BLE 并连接电脑" else "Key 保存失败，请重试", Toast.LENGTH_LONG).show()
+                    }
+                }.start()
+            }
+        }
+        content.addView(saveKeyButton)
+
         content.addView(makeButton("开启 BLE 通信测试") {
-            if (ensureNotificationPermission() && ensureBluetoothPermissions()) {
+            if (!saveKeyButton.isEnabled) {
+                Toast.makeText(this, "正在保存 Key，请稍后", Toast.LENGTH_LONG).show()
+            } else if (!runCatching { PairingKey(this).configured() }.getOrDefault(false)) {
+                Toast.makeText(this, "请先保存配对 Key", Toast.LENGTH_LONG).show()
+            } else if (ensureNotificationPermission() && ensureBluetoothPermissions()) {
                 try {
                     ContextCompat.startForegroundService(this, Intent(this, BleGattService::class.java))
                 } catch (_: SecurityException) {
