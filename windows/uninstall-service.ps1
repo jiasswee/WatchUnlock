@@ -2,6 +2,8 @@
 [CmdletBinding()]
 param()
 $ErrorActionPreference = 'Stop'
+$provider = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{18CC018C-6398-4E25-8407-3D4D897E6F30}')
+if ($provider) { $provider.Dispose(); throw '请先运行 uninstall-login.ps1 移除登录入口，再移除服务。' }
 $service = Get-Service -Name WatchUnlock -ErrorAction SilentlyContinue
 if ($service) {
     if ($service.Status -ne 'Stopped') {

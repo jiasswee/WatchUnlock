@@ -8,3 +8,5 @@ local.properties
 **/bin/
 **/obj/
 /dist/
+/.build/
+/.tools/

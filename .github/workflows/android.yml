@@ -53,7 +53,7 @@ jobs:
           retention-days: 14
 
   build-windows:
-    name: Build Windows client and service
+    name: Build Windows client, service and login provider
     runs-on: windows-2025
     steps:
       - name: Checkout
@@ -66,8 +66,15 @@ jobs:
         run: dotnet publish windows/WatchUnlock.BleClient/WatchUnlock.BleClient.csproj --configuration Release --runtime win-x64 --self-contained true --output dist/windows-ble
       - name: Publish Windows background service
         run: dotnet publish windows/WatchUnlock.Service/WatchUnlock.Service.csproj --configuration Release --runtime win-x64 --self-contained true --output dist/windows-ble/service
-      - name: Include service installation scripts
-        run: Copy-Item windows/install-service.ps1, windows/uninstall-service.ps1 -Destination dist/windows-ble
+      - name: Configure Windows login provider
+        run: cmake -S windows/WatchUnlock.CredentialProvider -B .build/credential-provider -A x64
+      - name: Build Windows login provider
+        run: cmake --build .build/credential-provider --config Release
+      - name: Include deployment files
+        run: |
+          New-Item -ItemType Directory -Path dist/windows-ble/credential-provider -Force | Out-Null
+          Copy-Item .build/credential-provider/Release/WatchUnlock.CredentialProvider.dll -Destination dist/windows-ble/credential-provider
+          Copy-Item windows/install-service.ps1, windows/uninstall-service.ps1, windows/install-login.ps1, windows/uninstall-login.ps1, windows/open-setup.cmd -Destination dist/windows-ble
       - name: Upload Windows BLE client
         uses: actions/upload-artifact@v7.0.2
         with:

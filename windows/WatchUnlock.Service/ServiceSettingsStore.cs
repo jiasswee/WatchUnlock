@@ -2,11 +2,12 @@ using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text.Json;
+using Microsoft.Win32;
 
 namespace WatchUnlock.Service;
 
 internal sealed record ServiceSettings(string Revision, ulong Address, int AddressType, string Name, string OwnerSid,
-    string ProtectedKey, bool Enabled, bool AutoReconnect);
+    string ProtectedKey, bool Enabled, bool AutoReconnect, string? AccountName = null, string? ProtectedPassword = null);
 
 internal sealed class ServiceSettingsStore
 {
@@ -45,13 +46,25 @@ internal sealed class ServiceSettingsStore
         {
             File.WriteAllBytes(temporary, JsonSerializer.SerializeToUtf8Bytes(value));
             File.Move(temporary, FilePath, overwrite: true);
+            PublishLogin(value);
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
 
+    // Only public tile metadata goes into the registry; secrets stay in the protected file.
+    internal static void PublishLogin(ServiceSettings? value)
+    {
+        using var key = Registry.LocalMachine.CreateSubKey(@"SOFTWARE\WatchUnlock");
+        key.SetValue("LoginEnabled", 0, RegistryValueKind.DWord);
+        key.SetValue("AccountSid", value?.OwnerSid ?? "", RegistryValueKind.String);
+        key.SetValue("AccountName", value?.AccountName ?? "", RegistryValueKind.String);
+        key.SetValue("LoginRevision", value?.Revision ?? "", RegistryValueKind.String);
+        key.SetValue("LoginEnabled", value is { Enabled: true, ProtectedPassword: not null, AccountName: not null } ? 1 : 0, RegistryValueKind.DWord);
+    }
+
     private static void RequirePrivate(FileSystemSecurity security)
     {
-        static bool Trusted(IdentityReference identity) => identity.Value is "S-1-5-18" or "S-1-5-32-544";
+        static bool Trusted(IdentityReference? identity) => identity?.Value is "S-1-5-18" or "S-1-5-32-544";
         if (!Trusted(security.GetOwner(typeof(SecurityIdentifier)))) throw new UnauthorizedAccessException("配置所有者无效，请以管理员身份重新配置。");
         foreach (FileSystemAccessRule rule in security.GetAccessRules(true, true, typeof(SecurityIdentifier)))
             if (rule.AccessControlType == AccessControlType.Allow && !Trusted(rule.IdentityReference))

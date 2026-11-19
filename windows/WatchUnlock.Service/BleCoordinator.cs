@@ -24,6 +24,7 @@ internal sealed class BleCoordinator : IDisposable
         try { settings = store.Load(); }
         catch (Exception error) { logger.LogWarning("配置读取失败，请重新配置；错误类型 {Type}", error.GetType().Name); }
         if (settings is not null) message = settings.Enabled ? "已配置，等待连接或请求" : "WatchUnlock 已停用";
+        ServiceSettingsStore.PublishLogin(settings);
     }
 
     internal string? OwnerSid { get { lock (state) return settings?.OwnerSid; } }
@@ -72,7 +73,9 @@ internal sealed class BleCoordinator : IDisposable
                 scope.Token.ThrowIfCancellationRequested();
                 if (settings?.Revision != revision) throw new OperationCanceledException("配置已改变，请重新选择手机。");
                 var updated = new ServiceSettings(Guid.NewGuid().ToString("D"), phone.Address, (int)phone.AddressType,
-                    phone.Name, ownerSid, ServiceSettingsStore.Protect(key), settings?.Enabled ?? true, settings?.AutoReconnect ?? false);
+                    phone.Name, ownerSid, ServiceSettingsStore.Protect(key), settings?.Enabled ?? true, settings?.AutoReconnect ?? false,
+                    settings?.OwnerSid == ownerSid ? settings.AccountName : null,
+                    settings?.OwnerSid == ownerSid ? settings.ProtectedPassword : null);
                 store.Save(updated);
                 settings = updated;
                 connection?.Dispose();
@@ -85,7 +88,7 @@ internal sealed class BleCoordinator : IDisposable
         finally { paired?.Dispose(); FinishOperation(scope); operations.Release(); }
     }
 
-    internal async Task<string> RequestAsync(string callerSid, bool system, CancellationToken token)
+    internal async Task<string> RequestAsync(string callerSid, CancellationToken token)
     {
         await operations.WaitAsync(token);
         CancellationTokenSource? scope = null;
@@ -95,7 +98,7 @@ internal sealed class BleCoordinator : IDisposable
             lock (state)
             {
                 snapshot = EnabledSettingsLocked();
-                if (!system && snapshot.OwnerSid != callerSid) throw new UnauthorizedAccessException("配置用户已改变，当前请求已作废。");
+                if (snapshot.OwnerSid != callerSid) throw new UnauthorizedAccessException("配置用户已改变，当前请求已作废。");
                 scope = StartOperationLocked(token, 80);
             }
             var client = await EnsureConnectedAsync(snapshot, scope.Token);
@@ -107,6 +110,52 @@ internal sealed class BleCoordinator : IDisposable
             return decision;
         }
         finally { FinishOperation(scope); operations.Release(); }
+    }
+
+    internal void SetCredential(string callerSid, byte[]? password)
+    {
+        lock (state)
+        {
+            var configured = settings ?? throw new InvalidOperationException("请先设置手机。");
+            if (configured.OwnerSid != callerSid) throw new UnauthorizedAccessException("请在已配置账户的桌面上保存密码。");
+            var account = password is null ? null : LocalAccount.Validate(callerSid, password);
+            var updated = configured with
+            {
+                Revision = Guid.NewGuid().ToString("D"), AccountName = account,
+                ProtectedPassword = password is null ? null : ServiceSettingsStore.Protect(password)
+            };
+            store.Save(updated);
+            settings = updated;
+            InterruptLocked();
+            PulseLocked();
+        }
+    }
+
+    internal string CredentialRevision(string sid)
+    {
+        lock (state)
+        {
+            var current = EnabledSettingsLocked();
+            if (current.OwnerSid != sid || current.ProtectedPassword is null || current.AccountName is null)
+                throw new UnauthorizedAccessException("此账户尚未配置登录凭据。");
+            return current.Revision;
+        }
+    }
+
+    internal (string Account, byte[] Password) TakeCredential(string sid, string revision)
+    {
+        lock (state)
+        {
+            var current = EnabledSettingsLocked();
+            if (current.OwnerSid != sid || current.Revision != revision || current.ProtectedPassword is null || current.AccountName is null)
+                throw new UnauthorizedAccessException("配置已改变，当前授权已作废。");
+            var password = System.Security.Cryptography.ProtectedData.Unprotect(Convert.FromBase64String(current.ProtectedPassword), null,
+                System.Security.Cryptography.DataProtectionScope.LocalMachine);
+            if (password.Length is > 0 and <= CredentialProtocol.MaximumPasswordBytes && password.Length % 2 == 0)
+                return (current.AccountName, password);
+            CryptographicOperations.ZeroMemory(password);
+            throw new InvalidDataException("保存的密码格式无效。");
+        }
     }
 
     internal async Task ReconnectLoopAsync(CancellationToken token)

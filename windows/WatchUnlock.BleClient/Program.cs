@@ -3,6 +3,12 @@ using System.Security.Cryptography;
 using WatchUnlock.BleClient;
 
 Console.OutputEncoding = Encoding.UTF8;
+if (args is ["--setup"])
+{
+    try { await ServiceControl.MenuAsync(CancellationToken.None); }
+    catch (Exception error) { Console.Error.WriteLine(ErrorInfo.Describe(error)); Environment.ExitCode = 1; }
+    return;
+}
 Console.WriteLine($"WatchUnlock {typeof(BleClient).Assembly.GetName().Version?.ToString(3)} BLE 通信测试：只验证通知回复，不执行 Windows 解锁。");
 Console.WriteLine("请安装 0.4.0 或更新版本，在手机保存配对 Key，并开启 BLE、通知和附近设备权限。");
 using var shutdown = new CancellationTokenSource();
@@ -11,14 +17,6 @@ Phone? selected = null;
 byte[]? pairingKey = null;
 try
 {
-    Console.WriteLine("回车进入直接通信测试；输入 s 管理后台服务，q 退出。");
-    var mode = Console.ReadLine()?.Trim();
-    if (mode is null || mode.Equals("q", StringComparison.OrdinalIgnoreCase)) return;
-    if (mode.Equals("s", StringComparison.OrdinalIgnoreCase))
-    {
-        await ServiceControl.MenuAsync(shutdown.Token);
-        return;
-    }
     pairingKey = PairingProtocol.ReadKey();
     while (!shutdown.IsCancellationRequested)
     {

@@ -110,9 +110,9 @@ internal sealed class ServiceWorker : BackgroundService
                         if (caller.Session == 0 || (!caller.System && caller.Sid != coordinator.OwnerSid))
                             throw new UnauthorizedAccessException("授权请求必须来自已配置用户的交互会话。");
                         await ServiceProtocol.WriteAsync(pipe, new ServiceReply(1, id, "progress", "后台服务正在发起新的 10 秒请求……"), lifetime.Token);
-                        var decision = await coordinator.RequestAsync(caller.Sid, caller.System, lifetime.Token);
+                        var decision = await coordinator.RequestAsync(caller.Sid, lifetime.Token);
                         lifetime.Token.ThrowIfCancellationRequested();
-                        var text = decision == "approved" ? "回复匹配，后台服务已验证授权（尚未接入 Windows 登录）。" : $"本次未授权，结果：{decision}。";
+                        var text = decision == "approved" ? "回复匹配，本次后台通信验证成功。" : $"本次未授权，结果：{decision}。";
                         await ServiceProtocol.WriteAsync(pipe, new ServiceReply(1, id, "result", text, Decision: decision), lifetime.Token);
                         break;
                     default: throw new InvalidDataException("未知后台服务操作。");
