@@ -8,7 +8,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.watchunlock.app"
+        applicationId = "com.whatsapp"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
