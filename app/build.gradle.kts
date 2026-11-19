@@ -8,7 +8,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.whatsapp"
+        applicationId = "org.telegram.messenger"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
